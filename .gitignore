@@ -1,0 +1,15 @@
+
+# Data and outputs (never commit)
+data/
+outputs/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+# Virtual environments
+.venv/
+
