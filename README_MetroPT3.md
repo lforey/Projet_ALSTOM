@@ -30,12 +30,11 @@ The CSV must contain:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-...
+
 
 
 ## Run a single experiment
 
-```bash
 python scripts/run_single.py \
   --data_dir ./data \
   --out_dir ./outputs/single_run \
@@ -44,16 +43,13 @@ python scripts/run_single.py \
   --stride 20 \
   --hidden 64 \
   --latent 4
-...
 
 ## Run an AUC grid search
 
-```bash
 python scripts/run_grid_auc.py \
   --data_dir ./data \
   --out_dir ./outputs/grid_auc \
   --resample 20S
-...
 
 
 Grid search exports:
@@ -64,9 +60,7 @@ A CSV (grid_results_partial.csv) that is appended after each run (safe to stop/r
 
 ## Analyze grid results
 
-```bash
 python scripts/analyze_grid.py --results_csv ./outputs/grid_auc/<RUN_FOLDER>/grid_results_partial.csv
-...
 
 ## Notes
 
