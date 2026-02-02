@@ -3,6 +3,12 @@ import glob
 import pandas as pd
 
 
+# Columns to exclude from the feature set (redundant sensors, etc.)
+EXCLUDED_COLUMNS = [
+    "Reservoirs",  # perfectly correlated (corr=1) with TP3
+]
+
+
 def find_csv(data_dir: str, pattern: str = "*MetroPT*.csv") -> str:
     """
     Find a CSV file under data_dir recursively.
@@ -43,6 +49,7 @@ def load_raw_csv(csv_path: str, timestamp_col: str = "timestamp") -> pd.DataFram
     -----
     - Keeps only numeric columns (float32).
     - Drops rows with missing timestamps.
+    - Removes user-defined excluded columns.
     - Sorts by time.
 
     Parameters
@@ -59,8 +66,11 @@ def load_raw_csv(csv_path: str, timestamp_col: str = "timestamp") -> pd.DataFram
     """
     header = pd.read_csv(csv_path, nrows=0)
     cols = header.columns.tolist()
+
     if timestamp_col not in cols:
-        raise ValueError(f"Timestamp column '{timestamp_col}' not found. Available: {cols}")
+        raise ValueError(
+            f"Timestamp column '{timestamp_col}' not found. Available: {cols}"
+        )
 
     usecols = [c for c in cols if not str(c).startswith("Unnamed")]
 
@@ -70,11 +80,30 @@ def load_raw_csv(csv_path: str, timestamp_col: str = "timestamp") -> pd.DataFram
         parse_dates=[timestamp_col],
         low_memory=False,
     )
-    df = df.dropna(subset=[timestamp_col]).sort_values(timestamp_col).set_index(timestamp_col)
+
+    df = (
+        df
+        .dropna(subset=[timestamp_col])
+        .sort_values(timestamp_col)
+        .set_index(timestamp_col)
+    )
 
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
+
     if len(numeric_cols) == 0:
         raise ValueError("No numeric columns found in the CSV.")
 
+    # Remove excluded columns (e.g. perfectly correlated sensors)
+    numeric_cols = [
+        c for c in numeric_cols
+        if c not in EXCLUDED_COLUMNS
+    ]
+
+    if len(numeric_cols) == 0:
+        raise ValueError(
+            "All numeric columns were excluded. Check EXCLUDED_COLUMNS."
+        )
+
     df = df[numeric_cols].astype("float32")
+
     return df
