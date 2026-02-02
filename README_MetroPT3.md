@@ -36,7 +36,7 @@ pip install -r requirements.txt
 ## Run a single experiment
 
 ```bash
-python scripts/run_single.py \
+PYTHONPATH=. python scripts/run_single.py \
   --data_dir ./data \
   --out_dir ./outputs/single_run \
   --resample 1T \
@@ -46,10 +46,12 @@ python scripts/run_single.py \
   --latent 4
 ```
 
+you might have to use 'set PYTHONPATH=.' instead of 'PYTHONPATH=.' 
+
 ## Run an AUC grid search
 
 ```bash
-python scripts/run_grid_auc.py \
+PYTHONPATH=. python scripts/run_grid_auc.py \
   --data_dir ./data \
   --out_dir ./outputs/grid_auc \
   --resample 20S
