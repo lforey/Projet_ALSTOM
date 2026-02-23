@@ -44,18 +44,32 @@ def parse_args():
     return p.parse_args()
 
 
-def build_param_grid(resample_rule: str) -> dict:
+def build_param_grid_small_windows(resample_rule: str) -> dict:
     """
-    A practical grid for long-duration anomalies (start small, refine later).
-    This is intentionally not gigantic; otherwise you'll end up with multi-day runs.
+    Focused grid to progressively reduce WINDOW_SIZE
+    while keeping model capacity stable.
+    Designed for AUC optimization (ROC-AUC / PR-AUC).
+
+    Goal:
+    - Identify the smallest viable window
+    - Keep runtime reasonable
     """
+
     return {
         "RESAMPLE_RULE": [resample_rule],
-        "WINDOW_SIZE": [720, 1080, 1440],  # 4h / 6h / 8h if resample=20S
-        "STRIDE": [30, 60, 90],            # 10/20/30 min if resample=20S
-        "HIDDEN_SIZE": [64, 96],
-        "LATENT_SIZE": [2, 4, 6],
-        "BATCH_SIZE": [32, 64],
+
+        # Progressively smaller windows (in minutes for 1T)
+        "WINDOW_SIZE": [120, 180, 240, 300],
+
+        # Moderate overlap
+        "STRIDE": [20, 30, 60],
+
+        # Stable model capacity
+        "HIDDEN_SIZE": [48, 64],
+        "LATENT_SIZE": [2, 4],
+
+        # Keep runtime under control
+        "BATCH_SIZE": [64],
         "EPOCHS": [20],
         "LR": [1e-3],
     }
