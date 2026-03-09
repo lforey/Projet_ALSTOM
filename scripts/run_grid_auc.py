@@ -44,7 +44,7 @@ def parse_args():
     return p.parse_args()
 
 
-def build_param_grid_small_windows(resample_rule: str) -> dict:
+def build_param_grid(resample_rule: str) -> dict:
     """
     Focused grid to progressively reduce WINDOW_SIZE
     while keeping model capacity stable.
@@ -56,23 +56,24 @@ def build_param_grid_small_windows(resample_rule: str) -> dict:
     """
 
     return {
-        "RESAMPLE_RULE": [resample_rule],
+    "RESAMPLE_RULE": [resample_rule],
 
-        # Progressively smaller windows (in minutes for 1T)
-        "WINDOW_SIZE": [120, 180, 240, 300],
+    # Fine-grained window reduction
+    "WINDOW_SIZE": [180, 195, 210, 225, 240],
 
-        # Moderate overlap
-        "STRIDE": [20, 30, 60],
+    # Focus on effective strides only
+    "STRIDE": [15, 20, 30],
 
-        # Stable model capacity
-        "HIDDEN_SIZE": [48, 64],
-        "LATENT_SIZE": [2, 4],
+    # Keep only architectures that worked
+    "HIDDEN_SIZE": [48, 64],
 
-        # Keep runtime under control
-        "BATCH_SIZE": [64],
-        "EPOCHS": [20],
-        "LR": [1e-3],
-    }
+    # Strong regularization zone
+    "LATENT_SIZE": [2, 3, 4],
+
+    "BATCH_SIZE": [64],
+    "EPOCHS": [20],
+    "LR": [1e-3],
+	}
 
 
 def main():
