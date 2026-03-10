@@ -59,6 +59,8 @@ def main():
     ensure_dir(args.out_dir)
 
     torch.set_num_threads(1)
+    np.random.seed(42)
+    torch.manual_seed(42)
     device = "cpu"
 
     csv_path = args.csv_path or find_csv(args.data_dir)
@@ -92,13 +94,25 @@ def main():
     if len(trainval_starts) < 200:
         raise ValueError("Not enough pure-normal windows for train/val split.")
 
-    # Chronological split
+    # Chronological split with temporal gap to avoid overlap leakage
     n_w = len(trainval_starts)
     w_train_end = int(n_w * 0.7)
     w_val_end = int(n_w * 0.85)
 
-    train_starts = trainval_starts[:w_train_end]
-    val_starts = trainval_starts[w_train_end:w_val_end]
+    raw_train_starts = trainval_starts[:w_train_end]
+    raw_val_starts = trainval_starts[w_train_end:w_val_end]
+
+    if len(raw_train_starts) == 0 or len(raw_val_starts) == 0:
+        raise ValueError("Chronological split produced an empty train or validation set.")
+
+    gap = args.window
+    last_train_end = raw_train_starts[-1] + gap
+    val_starts = raw_val_starts[raw_val_starts >= last_train_end]
+
+    if len(val_starts) == 0:
+        raise ValueError("Validation set became empty after enforcing a temporal gap.")
+
+    train_starts = raw_train_starts
 
     train_loader = DataLoader(StartsWindowDataset(X, train_starts, args.window),
                               batch_size=args.batch, shuffle=True, num_workers=0, drop_last=True)

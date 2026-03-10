@@ -1,6 +1,5 @@
 import os
 import gc
-from typing import Iterable
 
 
 def ensure_dir(path: str) -> None:
@@ -8,14 +7,19 @@ def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
-def cleanup(*objs: Iterable[object]) -> None:
+def cleanup(*_objs) -> None:
     """
-    Best-effort cleanup to reduce memory pressure between runs.
-    This is mainly helpful for long grid searches on CPU.
+    Trigger Python garbage collection.
+
+    Passing objects here is only cosmetic:
+    deleting local references inside this function does not delete
+    the caller's references.
     """
-    for o in objs:
-        try:
-            del o
-        except Exception:
-            pass
     gc.collect()
+
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass

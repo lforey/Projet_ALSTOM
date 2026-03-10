@@ -1,5 +1,9 @@
-import os, gc, itertools, json
-import numpy as np
+import argparse
+import gc
+import itertools
+import json
+import os
+
 import pandas as pd
 
 from src.forecast_pipeline import run_single_forecast_experiment
@@ -8,8 +12,8 @@ from src.forecast_pipeline import run_single_forecast_experiment
 def build_forecast_grid(resample_rule: str) -> dict:
     return {
         "RESAMPLE_RULE": [resample_rule],
-        "INPUT_WINDOW": [120, 180, 240],   # minutes if 1T
-        "PRED_HORIZON": [10, 30, 60],      # 10/30/60 min ahead
+        "INPUT_WINDOW": [120, 180, 240],
+        "PRED_HORIZON": [10, 30, 60],
         "STRIDE": [20, 30],
         "HIDDEN": [48, 64],
         "LATENT": [2, 4],
@@ -20,29 +24,47 @@ def build_forecast_grid(resample_rule: str) -> dict:
     }
 
 
-def main():
-    import argparse
+def parse_args():
     p = argparse.ArgumentParser(description="Grid search for forecasting-based anomaly scoring (AUC).")
     p.add_argument("--data_dir", required=True)
+    p.add_argument("--csv_path", default=None, help="Optional direct path to a CSV. Overrides data_dir search.")
     p.add_argument("--out_dir", required=True)
+    p.add_argument("--run_dir", default=None, help="Existing run directory to resume. If omitted, create a new timestamped folder.")
+    p.add_argument("--timestamp_col", default="timestamp", help="Timestamp column name.")
     p.add_argument("--resample", default="1T")
-    args = p.parse_args()
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
 
     grid = build_forecast_grid(args.resample)
     os.makedirs(args.out_dir, exist_ok=True)
 
-    stamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(args.out_dir, f"forecast_grid_{stamp}")
-    os.makedirs(run_dir, exist_ok=True)
+    if args.run_dir is not None:
+        run_dir = args.run_dir
+        os.makedirs(run_dir, exist_ok=True)
+    else:
+        stamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = os.path.join(args.out_dir, f"forecast_grid_{stamp}")
+        os.makedirs(run_dir, exist_ok=True)
 
-    with open(os.path.join(run_dir, "param_grid.json"), "w", encoding="utf-8") as f:
-        json.dump(grid, f, indent=2)
+    param_grid_path = os.path.join(run_dir, "param_grid.json")
+    if not os.path.exists(param_grid_path):
+        with open(param_grid_path, "w", encoding="utf-8") as f:
+            json.dump(grid, f, indent=2)
 
     keys = list(grid.keys())
     combos = list(itertools.product(*[grid[k] for k in keys]))
 
-    results = []
     out_csv = os.path.join(run_dir, "grid_results_partial.csv")
+
+    done = set()
+    if os.path.exists(out_csv):
+        prev = pd.read_csv(out_csv)
+        if "run_name" in prev.columns:
+            done = set(prev["run_name"].dropna().astype(str).tolist())
+        print(f"Resume enabled: {len(done)} runs already done -> will be skipped.")
 
     for i, combo in enumerate(combos, start=1):
         params = dict(zip(keys, combo))
@@ -53,13 +75,20 @@ def main():
             f"E{params['EPOCHS']}_LR{params['LR']}_AUC{params['AUC_POINTS']}"
         )
         out_run = os.path.join(run_dir, run_name)
+        metrics_json = os.path.join(out_run, "forecast_metrics.json")
+
+        if run_name in done and os.path.exists(metrics_json):
+            print(f"[{i}/{len(combos)}] SKIP {run_name}")
+            continue
 
         print(f"\n[{i}/{len(combos)}] {run_name}")
 
         try:
             ret = run_single_forecast_experiment(
                 data_dir=args.data_dir,
+                csv_path=args.csv_path,
                 out_dir=out_run,
+                timestamp_col=args.timestamp_col,
                 resample_rule=params["RESAMPLE_RULE"],
                 input_window=int(params["INPUT_WINDOW"]),
                 pred_horizon=int(params["PRED_HORIZON"]),
@@ -73,12 +102,10 @@ def main():
                 device="cpu",
             )
 
-            # Read metrics.json produced by the run
-            import json as _json
-            with open(os.path.join(out_run, "forecast_metrics.json"), "r", encoding="utf-8") as f:
-                m = _json.load(f)
+            with open(metrics_json, "r", encoding="utf-8") as f:
+                m = json.load(f)
 
-            results.append({
+            row = {
                 **params,
                 "run_name": run_name,
                 "roc_auc_approx": m["roc_auc_approx"],
@@ -86,15 +113,19 @@ def main():
                 "epochs_ran": m["epochs_ran"],
                 "best_val_mse": m["best_val_mse"],
                 "fig_path": ret["fig_path"],
-            })
+            }
+
+            print(
+                f"OK | ROC_AUC~={row['roc_auc_approx']:.3f} "
+                f"PR_AUC={row['pr_auc']:.3f}"
+            )
 
         except Exception as e:
-            results.append({**params, "run_name": run_name, "error": repr(e)})
+            row = {**params, "run_name": run_name, "error": repr(e)}
+            print(f"ERROR | {run_name} | {e!r}")
 
-        # Always checkpoint partial CSV (so you can stop/resume safely)
-        pd.DataFrame(results).to_csv(out_csv, index=False)
-
-        # Cleanup between runs
+        write_header = not os.path.exists(out_csv)
+        pd.DataFrame([row]).to_csv(out_csv, mode="a", header=write_header, index=False)
         gc.collect()
 
     print(f"\nDone. Results: {out_csv}")

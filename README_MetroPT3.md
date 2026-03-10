@@ -102,7 +102,8 @@ PYTHONPATH=. python scripts/run_grid_auc.py \
 Grid search exports:
 
 - One figure per run (score timeline + AUC information)
-- A CSV (`grid_results_partial.csv`) that is appended after each run (safe to stop/resume)
+- A CSV (`grid_results_partial.csv`) appended after each run
+- To resume an interrupted grid, relaunch the script with `--run_dir <existing_run_folder>`
 
 ---
 
@@ -163,7 +164,8 @@ Outputs:
 - One folder per run
 - A score plot per run
 - A `forecast_metrics.json` file
-- A `grid_results_partial.csv` file (safe checkpointing)
+- A `grid_results_partial.csv` file
+- To resume an interrupted forecasting grid, relaunch the script with `--run_dir <existing_run_folder>`
 
 ---
 

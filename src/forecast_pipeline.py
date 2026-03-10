@@ -10,8 +10,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from src.data import find_csv, load_raw_csv  # adjust if your module name differs
-from src.config import DEFAULT_ANOMALIES     # adjust if your anomalies are defined elsewhere
+from src.data_io import find_csv, load_raw_csv
+from src.config import DEFAULT_ANOMALIES
 
 from src.forecast_dataset import (
     build_forecast_starts,
@@ -20,6 +20,16 @@ from src.forecast_dataset import (
 )
 from src.forecast_model import LSTMForecaster
 from src.forecast_metrics import compute_auc_metrics_limited_thresholds
+
+def normalize_anomaly_periods(anomaly_periods):
+    normalized = []
+    for a in anomaly_periods:
+        if hasattr(a, "name") and hasattr(a, "start") and hasattr(a, "end"):
+            normalized.append((a.name, pd.Timestamp(a.start), pd.Timestamp(a.end)))
+        else:
+            name, start, end = a
+            normalized.append((name, pd.Timestamp(start), pd.Timestamp(end)))
+    return normalized
 
 
 def add_ground_truth(df: pd.DataFrame, anomaly_periods) -> pd.DataFrame:
@@ -73,6 +83,8 @@ def run_single_forecast_experiment(
     auc_threshold_points: int = 500,
     device: str = "cpu",
     anomaly_periods=DEFAULT_ANOMALIES,
+    csv_path: str = None,
+    timestamp_col: str = "timestamp",
 ):
     os.makedirs(out_dir, exist_ok=True)
 
@@ -80,8 +92,10 @@ def run_single_forecast_experiment(
     np.random.seed(42)
     torch.manual_seed(42)
 
-    csv_path = find_csv(data_dir)
-    df_raw = load_raw_csv(csv_path, timestamp_col="timestamp")
+    anomaly_periods = normalize_anomaly_periods(anomaly_periods)
+
+    csv_path = csv_path or find_csv(data_dir)
+    df_raw = load_raw_csv(csv_path, timestamp_col=timestamp_col)
 
     # Resample + GT
     df = df_raw.resample(resample_rule).mean()
@@ -117,13 +131,25 @@ def run_single_forecast_experiment(
     if len(trainval_starts) < 200:
         raise ValueError("Not enough normal windows for training/validation.")
 
-    # Chrono split
+        # Chrono split with temporal gap to avoid overlap leakage
     n_w = len(trainval_starts)
     w_train_end = int(n_w * 0.7)
     w_val_end = int(n_w * 0.85)
 
-    train_starts = trainval_starts[:w_train_end]
-    val_starts = trainval_starts[w_train_end:w_val_end]
+    raw_train_starts = trainval_starts[:w_train_end]
+    raw_val_starts = trainval_starts[w_train_end:w_val_end]
+
+    if len(raw_train_starts) == 0 or len(raw_val_starts) == 0:
+        raise ValueError("Chronological split produced an empty train or validation set.")
+
+    gap = input_window + pred_horizon
+    last_train_end = raw_train_starts[-1] + gap
+    val_starts = raw_val_starts[raw_val_starts >= last_train_end]
+
+    if len(val_starts) == 0:
+        raise ValueError("Validation set became empty after enforcing a temporal gap.")
+
+    train_starts = raw_train_starts
 
     train_loader = DataLoader(
         ForecastWindowDataset(X, train_starts, input_window, pred_horizon),
@@ -176,10 +202,13 @@ def run_single_forecast_experiment(
 
         print(f"Epoch {ep:02d} | train_loss={train_loss:.6f} | val_mse={val_mse:.6f}")
 
+        improvement = best_val - val_mse
+        if improvement > 0:
+            best_val = val_mse
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
         if early_stopping:
-            if (best_val - val_mse) > min_delta:
-                best_val = val_mse
-                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            if improvement > min_delta:
                 no_improve = 0
             else:
                 no_improve += 1
@@ -187,7 +216,7 @@ def run_single_forecast_experiment(
                     print(f"Early stopping after {patience} epochs without improvement > {min_delta}.")
                     break
 
-    if early_stopping and best_state is not None:
+    if best_state is not None:
         model.load_state_dict(best_state)
         print(f"Best val_mse retained: {best_val:.6f} (epochs_ran={epochs_ran})")
 

@@ -39,6 +39,7 @@ def parse_args():
     p.add_argument("--data_dir", required=True, help="Directory containing CSV file(s).")
     p.add_argument("--csv_path", default=None, help="Optional direct path to CSV.")
     p.add_argument("--out_dir", required=True, help="Output directory.")
+    p.add_argument("--run_dir", default=None, help="Existing run directory to resume. If omitted, create a new timestamped folder.")
     p.add_argument("--timestamp_col", default="timestamp", help="Timestamp column name.")
     p.add_argument("--resample", default="20S", help="Resample rule (e.g., 1T, 20S).")
     return p.parse_args()
@@ -81,35 +82,39 @@ def main():
     ensure_dir(args.out_dir)
 
     torch.set_num_threads(1)
+    np.random.seed(42)
+    torch.manual_seed(42)
     device = "cpu"
 
     csv_path = args.csv_path or find_csv(args.data_dir)
     print(f"Using CSV: {csv_path}")
 
-    # Load once (raw) to avoid re-reading the CSV for each run.
     df_raw = load_raw_csv(csv_path, timestamp_col=args.timestamp_col)
-
     anomalies = [(a.name, a.start, a.end) for a in DEFAULT_ANOMALIES]
 
     grid = build_param_grid(args.resample)
-    run_stamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(args.out_dir, f"grid_auc_{run_stamp}")
-    ensure_dir(run_dir)
 
-    # Save grid for reproducibility
-    with open(os.path.join(run_dir, "param_grid.json"), "w", encoding="utf-8") as f:
-        json.dump(grid, f, indent=2)
+    if args.run_dir is not None:
+        run_dir = args.run_dir
+        ensure_dir(run_dir)
+    else:
+        run_stamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = os.path.join(args.out_dir, f"grid_auc_{run_stamp}")
+        ensure_dir(run_dir)
+
+    param_grid_path = os.path.join(run_dir, "param_grid.json")
+    if not os.path.exists(param_grid_path):
+        with open(param_grid_path, "w", encoding="utf-8") as f:
+            json.dump(grid, f, indent=2)
 
     out_csv = os.path.join(run_dir, "grid_results_partial.csv")
 
-    # Prepare combinations
     keys = list(grid.keys())
     values = [grid[k] for k in keys]
     combos = list(itertools.product(*values))
     print(f"Total runs: {len(combos)}")
     print(f"Outputs: {run_dir}")
 
-    # Resume logic: skip run_name already present in CSV
     done = set()
     if os.path.exists(out_csv):
         prev = pd.read_csv(out_csv)
@@ -133,7 +138,6 @@ def main():
             f"run{idx:04d}_res{RESAMPLE_RULE}_W{WINDOW_SIZE}_S{STRIDE}_"
             f"H{HIDDEN_SIZE}_Z{LATENT_SIZE}_B{BATCH_SIZE}_E{EPOCHS}_LR{LR}"
         )
-
         out_png = os.path.join(run_dir, run_name + ".png")
 
         if run_name in done and os.path.exists(out_png):
@@ -143,124 +147,147 @@ def main():
         print(f"\n[{idx}/{len(combos)}] {run_name}")
         t0 = time.time()
 
-        # --- Prepare dataset for this run
-        df = resample_mean(df_raw, RESAMPLE_RULE)
-        df = add_ground_truth(df, anomalies, label_col="ground_truth_anomaly")
+        try:
+            df = resample_mean(df_raw, RESAMPLE_RULE)
+            df = add_ground_truth(df, anomalies, label_col="ground_truth_anomaly")
 
-        feature_cols = [c for c in df.columns if c != "ground_truth_anomaly"]
-        gt = df["ground_truth_anomaly"].astype(int).values
-        normal_mask = (gt == 0)
+            feature_cols = [c for c in df.columns if c != "ground_truth_anomaly"]
+            gt = df["ground_truth_anomaly"].astype(int).values
+            normal_mask = (gt == 0)
 
-        df = impute_sensors(df, feature_cols, normal_mask)
-        X_all = df[feature_cols].values.astype(np.float32, copy=False)
+            df = impute_sensors(df, feature_cols, normal_mask)
+            X_all = df[feature_cols].values.astype(np.float32, copy=False)
 
-        if np.isnan(X_all).any() or np.isinf(X_all).any():
-            raise ValueError("NaN/Inf still present after imputation (unexpected).")
+            if np.isnan(X_all).any() or np.isinf(X_all).any():
+                raise ValueError("NaN/Inf still present after imputation (unexpected).")
 
-        T = len(df)
-        if T < WINDOW_SIZE + 1:
-            raise ValueError("Time series too short for chosen window size.")
+            T = len(df)
+            if T < WINDOW_SIZE + 1:
+                raise ValueError("Time series too short for chosen window size.")
 
-        X, _ = fit_transform_scaler(X_all, normal_mask)
+            X, _ = fit_transform_scaler(X_all, normal_mask)
 
-        all_starts = build_window_starts(T, WINDOW_SIZE, STRIDE)
-        trainval_starts = pure_normal_starts_fast(gt, WINDOW_SIZE, STRIDE)
-        if len(trainval_starts) < 200:
-            raise ValueError("Not enough pure-normal windows for train/val split.")
+            all_starts = build_window_starts(T, WINDOW_SIZE, STRIDE)
+            trainval_starts = pure_normal_starts_fast(gt, WINDOW_SIZE, STRIDE)
 
-        # Chronological split
-        n_w = len(trainval_starts)
-        w_train_end = int(n_w * 0.7)
-        w_val_end = int(n_w * 0.85)
-        train_starts = trainval_starts[:w_train_end]
-        val_starts = trainval_starts[w_train_end:w_val_end]
+            if len(trainval_starts) < 200:
+                raise ValueError("Not enough pure-normal windows for train/val split.")
 
-        train_loader = DataLoader(
-            StartsWindowDataset(X, train_starts, WINDOW_SIZE),
-            batch_size=BATCH_SIZE, shuffle=True, num_workers=0, drop_last=True
-        )
-        val_loader = DataLoader(
-            StartsWindowDataset(X, val_starts, WINDOW_SIZE),
-            batch_size=BATCH_SIZE, shuffle=False, num_workers=0, drop_last=False
-        )
+            n_w = len(trainval_starts)
+            w_train_end = int(n_w * 0.7)
+            w_val_end = int(n_w * 0.85)
 
-        # --- Train
-        model = LSTMAutoencoder(n_features=len(feature_cols), hidden_size=HIDDEN_SIZE, latent_size=LATENT_SIZE).to(device)
+            raw_train_starts = trainval_starts[:w_train_end]
+            raw_val_starts = trainval_starts[w_train_end:w_val_end]
 
-        summary = train_with_early_stopping(
-            model=model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            device=device,
-            epochs=EPOCHS,
-            lr=LR,
-            patience=7,
-            min_delta=1e-4,
-            use_early_stopping=True,
-        )
+            if len(raw_train_starts) == 0 or len(raw_val_starts) == 0:
+                raise ValueError("Chronological split produced an empty train or validation set.")
 
-        # --- Score & AUC
-        all_loader = DataLoader(
-            StartsWindowDataset(X, all_starts, WINDOW_SIZE),
-            batch_size=BATCH_SIZE, shuffle=False, num_workers=0, drop_last=False
-        )
+            gap = WINDOW_SIZE
+            last_train_end = raw_train_starts[-1] + gap
+            val_starts = raw_val_starts[raw_val_starts >= last_train_end]
 
-        score = score_time_series_from_windows(
-            df_index=df.index,
-            T=T,
-            all_starts=all_starts,
-            window_size=WINDOW_SIZE,
-            model=model,
-            all_loader=all_loader,
-            device=device,
-        )
+            if len(val_starts) == 0:
+                raise ValueError("Validation set became empty after enforcing a temporal gap.")
 
-        auc = compute_auc_metrics(gt, score)
+            train_starts = raw_train_starts
 
-        info_box = (
-            f"RESAMPLE={RESAMPLE_RULE}\n"
-            f"W={WINDOW_SIZE}  STRIDE={STRIDE}\n"
-            f"H={HIDDEN_SIZE}  Z={LATENT_SIZE}\n"
-            f"B={BATCH_SIZE}  E(max)={EPOCHS}\n"
-            f"LR={LR}\n"
-            f"epochs_ran={summary['epochs_ran']}\n"
-            f"ROC_AUC={auc['roc_auc']:.3f}\n"
-            f"PR_AUC={auc['pr_auc']:.3f}\n"
-        )
+            train_loader = DataLoader(
+                StartsWindowDataset(X, train_starts, WINDOW_SIZE),
+                batch_size=BATCH_SIZE, shuffle=True, num_workers=0, drop_last=True
+            )
+            val_loader = DataLoader(
+                StartsWindowDataset(X, val_starts, WINDOW_SIZE),
+                batch_size=BATCH_SIZE, shuffle=False, num_workers=0, drop_last=False
+            )
 
-        plot_score_and_roc(
-            df_index=df.index,
-            score=score,
-            anomalies=anomalies,
-            roc_data=auc,
-            title=run_name,
-            out_path=out_png,
-            info_box=info_box,
-        )
+            model = LSTMAutoencoder(
+                n_features=len(feature_cols),
+                hidden_size=HIDDEN_SIZE,
+                latent_size=LATENT_SIZE,
+            ).to(device)
 
-        # --- Append results immediately (safe stop/resume)
-        row = {
-            **params,
-            "run_name": run_name,
-            "png_path": out_png,
-            "roc_auc": auc["roc_auc"],
-            "pr_auc": auc["pr_auc"],
-            "val_mse_best": summary["best_val_mse"],
-            "epochs_ran": summary["epochs_ran"],
-            "runtime_s": round(time.time() - t0, 2),
-        }
-        df_row = pd.DataFrame([row])
+            summary = train_with_early_stopping(
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                device=device,
+                epochs=EPOCHS,
+                lr=LR,
+                patience=7,
+                min_delta=1e-4,
+                use_early_stopping=True,
+            )
+
+            all_loader = DataLoader(
+                StartsWindowDataset(X, all_starts, WINDOW_SIZE),
+                batch_size=BATCH_SIZE, shuffle=False, num_workers=0, drop_last=False
+            )
+
+            score = score_time_series_from_windows(
+                df_index=df.index,
+                T=T,
+                all_starts=all_starts,
+                window_size=WINDOW_SIZE,
+                model=model,
+                all_loader=all_loader,
+                device=device,
+            )
+
+            auc = compute_auc_metrics(gt, score)
+
+            info_box = (
+                f"RESAMPLE={RESAMPLE_RULE}\n"
+                f"W={WINDOW_SIZE}  STRIDE={STRIDE}\n"
+                f"H={HIDDEN_SIZE}  Z={LATENT_SIZE}\n"
+                f"B={BATCH_SIZE}  E(max)={EPOCHS}\n"
+                f"LR={LR}\n"
+                f"epochs_ran={summary['epochs_ran']}\n"
+                f"ROC_AUC={auc['roc_auc']:.3f}\n"
+                f"PR_AUC={auc['pr_auc']:.3f}\n"
+            )
+
+            plot_score_and_roc(
+                df_index=df.index,
+                score=score,
+                anomalies=anomalies,
+                roc_data=auc,
+                title=run_name,
+                out_path=out_png,
+                info_box=info_box,
+            )
+
+            row = {
+                **params,
+                "run_name": run_name,
+                "png_path": out_png,
+                "roc_auc": auc["roc_auc"],
+                "pr_auc": auc["pr_auc"],
+                "val_mse_best": summary["best_val_mse"],
+                "epochs_ran": summary["epochs_ran"],
+                "runtime_s": round(time.time() - t0, 2),
+            }
+
+            print(f"OK | ROC_AUC={auc['roc_auc']:.3f} PR_AUC={auc['pr_auc']:.3f} | {row['runtime_s']}s")
+
+        except Exception as e:
+            row = {
+                **params,
+                "run_name": run_name,
+                "png_path": out_png,
+                "error": repr(e),
+                "runtime_s": round(time.time() - t0, 2),
+            }
+            print(f"ERROR | {run_name} | {e!r}")
+
         write_header = not os.path.exists(out_csv)
-        df_row.to_csv(out_csv, mode="a", header=write_header, index=False)
-
-        print(f"OK | ROC_AUC={auc['roc_auc']:.3f} PR_AUC={auc['pr_auc']:.3f} | {row['runtime_s']}s")
-
-        cleanup(df, X_all, X, model, train_loader, val_loader, all_loader, score)
+        pd.DataFrame([row]).to_csv(out_csv, mode="a", header=write_header, index=False)
+        cleanup()
 
     print("\nDone.")
     print(f"Results: {out_csv}")
     print(f"Images:  {run_dir}")
-    cleanup(df_raw)
+    cleanup()
 
 
 if __name__ == "__main__":

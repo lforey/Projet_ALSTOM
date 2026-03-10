@@ -80,10 +80,13 @@ def train_with_early_stopping(
         train_loss = float(np.mean(losses)) if len(losses) else float("inf")
         print(f"Epoch {epoch:02d} | train_loss={train_loss:.6f} | val_mse={val_mse:.6f}")
 
+        improvement = best_val - val_mse
+        if improvement > 0:
+            best_val = val_mse
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
         if use_early_stopping:
-            if (best_val - val_mse) > min_delta:
-                best_val = val_mse
-                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            if improvement > min_delta:
                 epochs_no_improve = 0
             else:
                 epochs_no_improve += 1
@@ -91,7 +94,7 @@ def train_with_early_stopping(
                     print(f"Early stopping: no improvement > {min_delta} for {patience} epochs.")
                     break
 
-    if use_early_stopping and best_state is not None:
+    if best_state is not None:
         model.load_state_dict(best_state)
 
     return {"best_val_mse": best_val, "epochs_ran": epochs_ran}
