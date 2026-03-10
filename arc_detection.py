@@ -15,15 +15,15 @@ def detect_instabilities(df, window_size=50, sigma_threshold=5):
 def plot_instabilities(df, unstable_indices, braking_id):
     """Plots the Vp signal and highlights unstable points in red."""
     plt.figure(figsize=(12, 4))
-    plt.plot(df['time'], df['Vp'], label='Signal Vp', color='blue', alpha=0.7)
+    plt.plot(df['time'], df['Vp'], label='Vp Signal', color='blue', alpha=0.7)
     
     if unstable_indices:
         plt.scatter(df['time'].iloc[unstable_indices], df['Vp'].iloc[unstable_indices], 
-                    color='red', label='Instabilités détectées', s=10)
+                    color='red', label='Detected Instabilities', s=10)
         
-    plt.title(f"Détection pour le freinage {braking_id}")
-    plt.xlabel("Temps (s)")
-    plt.ylabel("Vp (V)")
+    plt.title(f"Anomaly Detection for Record #{braking_id}")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Voltage Vp (V)")
     plt.legend()
     plt.show()
 
@@ -38,12 +38,12 @@ def extract_correlations(df, unstable_indices, pre_arc_window=10000):
         
         # Danger Zone (Pre-Arc)
         if onset_idx > pre_arc_window:
-            danger_segment = df.iloc[onset_idx - pre_arc_window : onset_idx]
+            danger_segment = df.iloc[onset_idx - pre_arc_window - 3000 : onset_idx - 3000]
             if danger_segment['Vp'].std() > 0.1 and danger_segment['Ip'].std() > 0.1:
                 pre_arc_corrs.append(danger_segment['Vp'].corr(danger_segment['Ip']))
         
         # Safe Zone (Normal)
-        safe_zone_end = onset_idx - 2000
+        safe_zone_end = onset_idx - 35000
         for i in range(50, safe_zone_end, 200):
             normal_segment = df.iloc[i : i + 200]
             if normal_segment['Vp'].std() > 0.1 and normal_segment['Ip'].std() > 0.1:

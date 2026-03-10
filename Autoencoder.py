@@ -179,12 +179,11 @@ def evaluate_and_plot_raw_ae(test_results, threshold, true_anomaly_time, test_id
         
         print(f"  > First AI alarm raised at: {ai_alarm_time:.4f}s")
         if ai_alarm_time < safe_zone_end_time:
-            print(f"  PREMATURE: Alarm triggered way too early (False Alarm).")
-        elif ai_alarm_time <= true_anomaly_time:
-            print(f"  SUCCESS: Correctly anticipated by {lead_time:.4f} sec.")
+            print(f"  PREMATURE: Alarm triggered way too early (False Alarm)")
+        elif ai_alarm_time <= true_anomaly_time - 0.01:
+            print(f"  SUCCESS: Correctly anticipated by {lead_time:.4f} sec")
         else:
-            print(f"  DELAY: Detected {abs(lead_time):.4f} sec after the arc.")
-        print(f"  Total false alarms: {false_alarms}")
+            print(f"  No detection in advance")
     else:
         print("  FAILURE: AI never exceeded the threshold.")
 

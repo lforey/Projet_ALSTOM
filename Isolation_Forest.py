@@ -67,18 +67,13 @@ def evaluate_and_plot(test_results, threshold, true_anomaly_time, test_id):
         ai_alarm_time = test_results['time'].iloc[alarm_indices[0]]
         lead_time = true_anomaly_time - ai_alarm_time
         
-        # Changed 'Time' to 'time' here
-        false_alarms = len(test_results[(test_results['time'] < safe_zone_end_time) & 
-                                        (test_results['Smoothed_Score'] > threshold)])
-        
         print(f"  > First AI alarm raised at: {ai_alarm_time:.4f}s")
         if ai_alarm_time < safe_zone_end_time:
             print(f"  PREMATURE: Alarm triggered way too early (False Alarm).")
-        elif ai_alarm_time <= true_anomaly_time:
+        elif ai_alarm_time <= true_anomaly_time - 0.01:
             print(f"  SUCCESS: Correctly anticipated by {lead_time:.4f} sec.")
         else:
-            print(f"  DELAY: Detected {abs(lead_time):.4f} sec after the arc.")
-        print(f"  Total false alarms (noise points): {false_alarms}")
+            print(f"  No detection in advance")
     else:
         print("  FAILURE: AI never exceeded the threshold.")
 

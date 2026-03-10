@@ -1,15 +1,28 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+import glob
+import os
 
-def load_braking_data(braking_id, variables, base_path="Fichiers/"):
-    # Load time array first
-    df = pd.read_csv(f"{base_path}MM_B_{braking_id}_x.txt", header=None, names=["time"])
+def load_braking_data(braking_id, variables, prefix="MM", base_path="data/"):
+    # Construct base time file path
+    time_file = f"{base_path}{prefix}_B_{braking_id}_x.txt"
     
-    # Append requested variables
-    for var in variables:
-        temp_df = pd.read_csv(f"{base_path}MM_B_{braking_id}_{var}.txt", header=None, names=[var])
-        df = pd.concat([df, temp_df], axis=1)
+    if not os.path.exists(time_file):
+        print(f"Error: Missing time file {time_file}")
+        return None
         
+    df = pd.read_csv(time_file, header=None, names=["time"])
+    
+    # Iterate through requested variables and concatenate
+    for var in variables:
+        var_file = f"{base_path}{prefix}_B_{braking_id}_{var}.txt"
+        
+        if os.path.exists(var_file):
+            temp_df = pd.read_csv(var_file, header=None, names=[var])
+            df = pd.concat([df, temp_df], axis=1)
+        else:
+            print(f"Warning: Missing variable file {var_file}")
+            
     return df
 
 def plot_all_signals(df, title="Electrical Signals - Visual Arc Detection"):
@@ -46,3 +59,22 @@ def plot_voltage_current(df, braking_id):
     
     plt.tight_layout()
     plt.show()
+
+    import glob
+
+def get_available_ids(prefix="MM", base_path="data/"):
+    """
+    Scans the directory for available IDs matching the prefix format (e.g., MM_B_1_Vp.txt)
+    """
+    search_pattern = f"{base_path}{prefix}_B_*_Vp.txt"
+    file_list = sorted(glob.glob(search_pattern))
+    
+    available_ids = []
+    for file_path in file_list:
+        filename = os.path.basename(file_path)
+        # For 'MM_B_1_Vp.txt', split('_') gives ['MM', 'B', '1', 'Vp.txt']
+        # The ID is at index 2
+        b_id = filename.split('_')[2]
+        available_ids.append(b_id)
+        
+    return available_ids

@@ -65,7 +65,7 @@ def train_and_predict_lstm(all_data_dict, test_id, true_anomaly_times, feature_c
     neg, pos = np.bincount(y_train)
     class_weight = {0: 1.0, 1: (neg / pos)}
     
-    # --- LSTM ARCHITECTURE ---
+    # LSTM ARCHITECTURE
     input_layer = Input(shape=(params['time_steps'], len(feature_cols)))
     x = LSTM(32, return_sequences=False)(input_layer)
     x = Dropout(0.2)(x)
@@ -77,7 +77,7 @@ def train_and_predict_lstm(all_data_dict, test_id, true_anomaly_times, feature_c
     
     model.fit(X_train, y_train, epochs=10, batch_size=64, class_weight=class_weight, verbose=0)
     
-    # Inference (Test sequence creation needs dummy labels)
+    # Inference
     test_df = all_data_dict[test_id]
     test_df['Dummy'] = 0 
     X_test, _ = create_3d_sequences(test_df[feature_cols], test_df['Dummy'], params['time_steps'])
@@ -104,17 +104,14 @@ def evaluate_and_plot_lstm(test_results, threshold, true_time, pre_arc_target, t
     if alarm_indices:
         ai_alarm_time = test_results['time'].iloc[alarm_indices[0]]
         lead_time = true_time - ai_alarm_time
-        false_alarms = len(test_results[(test_results['time'] < safe_zone_end_time) & 
-                                        (test_results['Smoothed_Proba'] > threshold)])
         
         print(f"  > First AI alarm raised at: {ai_alarm_time:.4f}s")
         if ai_alarm_time < safe_zone_end_time:
             print(f"  PREMATURE: Alarm triggered {lead_time:.4f} sec too early.")
-        elif ai_alarm_time <= true_time:
+        elif ai_alarm_time <= true_time - 0.01:
             print(f"  SUCCESS: Correctly anticipated by {lead_time:.4f} sec.")
         else:
-            print(f"  DELAY: Detected {abs(lead_time):.4f} sec after the arc.")
-        print(f"  Total false alarms: {false_alarms}")
+            print(f"  No detection in advance")
     else:
         print("  FAILURE: Probability never exceeded threshold.")
 
