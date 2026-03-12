@@ -9,23 +9,6 @@ def add_ground_truth(
     anomalies: List[tuple],
     label_col: str = "ground_truth_anomaly",
 ) -> pd.DataFrame:
-    """
-    Add a binary ground truth anomaly column based on known anomaly periods.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Time-indexed dataframe.
-    anomalies : list[tuple]
-        List of (name, start_ts, end_ts).
-    label_col : str
-        Output label column name.
-
-    Returns
-    -------
-    pd.DataFrame
-        Copy of df with label column.
-    """
     out = df.copy()
     out[label_col] = 0
     for _, start, end in anomalies:
@@ -34,33 +17,23 @@ def add_ground_truth(
 
 
 def resample_mean(df: pd.DataFrame, rule: str) -> pd.DataFrame:
-    """Resample time series using mean aggregation."""
+    """
+    Resample time series using mean aggregation.
+
+    Special values:
+    - raw / none / native / keep : return the dataframe unchanged
+    """
+    if rule is None:
+        return df.copy()
+
+    rule_str = str(rule).strip().lower()
+    if rule_str in {"raw", "none", "native", "keep"}:
+        return df.copy()
+
     return df.resample(rule).mean()
 
 
 def impute_sensors(df: pd.DataFrame, feature_cols: List[str], normal_mask: np.ndarray) -> pd.DataFrame:
-    """
-    Impute missing values in sensor features.
-
-    Strategy (simple and pragmatic):
-    1) forward fill + backward fill (common for sensor streams)
-    2) fill remaining NaNs using median computed on normal periods only
-    3) fill any remaining NaNs with 0.0 (extreme edge case: fully missing column)
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Dataframe with features.
-    feature_cols : list[str]
-        Feature column names.
-    normal_mask : np.ndarray
-        Boolean mask indicating "normal" points for median fitting.
-
-    Returns
-    -------
-    pd.DataFrame
-        Dataframe where selected features have no NaNs.
-    """
     out = df.copy()
     features = out[feature_cols].copy()
 
@@ -77,23 +50,6 @@ def impute_sensors(df: pd.DataFrame, feature_cols: List[str], normal_mask: np.nd
 
 
 def fit_transform_scaler(X_all: np.ndarray, normal_mask: np.ndarray) -> tuple[np.ndarray, StandardScaler]:
-    """
-    Fit a StandardScaler on normal points only, then transform all points.
-
-    Parameters
-    ----------
-    X_all : np.ndarray
-        Full feature matrix [T, F].
-    normal_mask : np.ndarray
-        Boolean mask [T] indicating normal points.
-
-    Returns
-    -------
-    X_scaled : np.ndarray
-        Scaled features [T, F] float32.
-    scaler : StandardScaler
-        Fitted scaler.
-    """
     if normal_mask.sum() < 1000:
         raise ValueError("Not enough normal points to fit a scaler reliably (need >= 1000).")
 

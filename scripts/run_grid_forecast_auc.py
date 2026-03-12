@@ -1,9 +1,7 @@
-import argparse
+import os
 import gc
 import itertools
 import json
-import os
-
 import pandas as pd
 
 from src.forecast_pipeline import run_single_forecast_experiment
@@ -24,19 +22,16 @@ def build_forecast_grid(resample_rule: str) -> dict:
     }
 
 
-def parse_args():
-    p = argparse.ArgumentParser(description="Grid search for forecasting-based anomaly scoring (AUC).")
+def main():
+    import argparse
+    p = argparse.ArgumentParser(description="Grid search for forecasting-based anomaly scoring.")
     p.add_argument("--data_dir", required=True)
     p.add_argument("--csv_path", default=None, help="Optional direct path to a CSV. Overrides data_dir search.")
     p.add_argument("--out_dir", required=True)
     p.add_argument("--run_dir", default=None, help="Existing run directory to resume. If omitted, create a new timestamped folder.")
     p.add_argument("--timestamp_col", default="timestamp", help="Timestamp column name.")
     p.add_argument("--resample", default="1T")
-    return p.parse_args()
-
-
-def main():
-    args = parse_args()
+    args = p.parse_args()
 
     grid = build_forecast_grid(args.resample)
     os.makedirs(args.out_dir, exist_ok=True)
@@ -75,9 +70,9 @@ def main():
             f"E{params['EPOCHS']}_LR{params['LR']}_AUC{params['AUC_POINTS']}"
         )
         out_run = os.path.join(run_dir, run_name)
-        metrics_json = os.path.join(out_run, "forecast_metrics.json")
 
-        if run_name in done and os.path.exists(metrics_json):
+        metrics_path = os.path.join(out_run, "forecast_metrics.json")
+        if run_name in done and os.path.exists(metrics_path):
             print(f"[{i}/{len(combos)}] SKIP {run_name}")
             continue
 
@@ -102,22 +97,30 @@ def main():
                 device="cpu",
             )
 
-            with open(metrics_json, "r", encoding="utf-8") as f:
-                m = json.load(f)
+            m = ret["metrics"]
 
             row = {
                 **params,
                 "run_name": run_name,
-                "roc_auc_approx": m["roc_auc_approx"],
+                "roc_auc": m["roc_auc"],
                 "pr_auc": m["pr_auc"],
+                "best_threshold": m["best_threshold"],
+                "precision": m["precision"],
+                "recall": m["recall"],
+                "f1": m["f1"],
+                "TN": m["TN"],
+                "FP": m["FP"],
+                "FN": m["FN"],
+                "TP": m["TP"],
                 "epochs_ran": m["epochs_ran"],
                 "best_val_mse": m["best_val_mse"],
                 "fig_path": ret["fig_path"],
             }
 
             print(
-                f"OK | ROC_AUC~={row['roc_auc_approx']:.3f} "
-                f"PR_AUC={row['pr_auc']:.3f}"
+                f"OK | ROC_AUC={m['roc_auc']:.3f} PR_AUC={m['pr_auc']:.3f} "
+                f"F1={m['f1']:.3f} | thr={m['best_threshold']:.6f} | "
+                f"TN={m['TN']} FP={m['FP']} FN={m['FN']} TP={m['TP']}"
             )
 
         except Exception as e:
@@ -130,6 +133,7 @@ def main():
 
     print(f"\nDone. Results: {out_csv}")
     print(f"Runs folder: {run_dir}")
+    print(f"Result folder: {os.path.abspath(run_dir)}")
 
 
 if __name__ == "__main__":

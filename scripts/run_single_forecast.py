@@ -1,4 +1,5 @@
 import argparse
+import os
 from src.forecast_pipeline import run_single_forecast_experiment
 
 
@@ -28,7 +29,7 @@ def main():
     p.add_argument("--auc_points", type=int, default=500)
     args = p.parse_args()
 
-    run_single_forecast_experiment(
+    ret = run_single_forecast_experiment(
         data_dir=args.data_dir,
         csv_path=args.csv_path,
         out_dir=args.out_dir,
@@ -48,6 +49,19 @@ def main():
         auc_threshold_points=args.auc_points,
         device="cpu",
     )
+
+    m = ret["metrics"]
+    print(f"Saved figure: {ret['fig_path']}")
+    print(f"Saved metrics: {ret['metrics_path']}")
+    print(
+        "Best operating point | "
+        f"threshold={m['best_threshold']:.6f} | "
+        f"F1={m['f1']:.3f} | "
+        f"P={m['precision']:.3f} | "
+        f"R={m['recall']:.3f} | "
+        f"TN={m['TN']} FP={m['FP']} FN={m['FN']} TP={m['TP']}"
+    )
+    print(f"Result folder: {os.path.abspath(args.out_dir)}")
 
 
 if __name__ == "__main__":

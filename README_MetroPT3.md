@@ -2,46 +2,48 @@
 
 # Alstom Time Series Anomaly Detection & Forecasting
 
-This project implements two complementary pipelines for multivariate time series:
+This repository currently supports **two explicit dataset protocols** for the reconstruction-based pipeline:
 
-1. **Anomaly Detection (Reconstruction-based)**  
-   Temporal LSTM autoencoder that detects abnormal behavior using reconstruction error.
+1. **metropt3**  
+   Multivariate compressor dataset with anomaly periods explicitly defined in `src/config.py`.
 
-2. **Anomaly Prediction (Forecasting-based)**  
-   LSTM encoder–decoder that predicts future behavior and scores anomalies using prediction error.
+2. **arc_mm_braking_5**  
+   Pantograph electric arc dataset handled explicitly as the concatenation of:
+   `MM_B_1`, `MM_B_2`, `MM_B_3`, `MM_B_4`, `MM_B_5`.
 
-The goal is to detect long and subtle changes in system behavior that may not be
-obvious when looking at individual signals.
+   For this second dataset:
+   - the first 20% of each event is treated as **known healthy**
+   - the remaining 80% is treated as **unknown**
+   - grid-search metrics are therefore **proxy metrics**:
+     separation between known healthy region and the rest
+
+Forecasting remains documented and usable for **MetroPT3 only** in this repository version.
+
+---
+
+## Important convention
+
+All window parameters are expressed in **number of points after optional resampling**.
+
+Examples:
+- `--window 360` means **360 resampled points**
+- `--stride 20` means **20 resampled points**
+
+Use:
+- `--resample 1T` for 1-minute aggregation
+- `--resample 20S` for 20-second aggregation
+- `--resample raw` to keep the native sampling unchanged
+
+No automatic conversion from "minutes" to another scale is performed.
 
 ---
 
 ## Project structure
 
-- src/        : reusable Python modules (data, model, training, evaluation)
-- scripts/    : executable scripts (single run, grid search)
-- data/       : local data directory (not versioned)
-- outputs/    : results (plots, JSON metrics, CSV summaries)
-
-Detection and forecasting pipelines are independent.
-You can switch between them without modifying existing files.
-
----
-
-## Data
-
-Data is not included in this repository.
-
-Place your CSV file in the `data/` directory.
-
-The CSV must contain:
-- a timestamp column (default: `timestamp`)
-- numerical sensor columns
-
-The pipeline automatically:
-- resamples time
-- imputes missing values
-- scales using only normal periods
-- builds sliding windows
+- `src/`      : reusable Python modules
+- `scripts/`  : executable scripts
+- `data/`     : local data directory
+- `outputs/`  : plots and CSV summaries
 
 ---
 
@@ -53,7 +55,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-You might have to use:
+Depending on your system, you may need:
 
 ```bash
 set PYTHONPATH=.
@@ -65,22 +67,60 @@ instead of:
 PYTHONPATH=.
 ```
 
-depending on your system.
+Reconstruction-Based Detection
+Supported datasets
+A) MetroPT3
 
----
+Expected input:
 
-# Reconstruction-Based Anomaly Detection
+one CSV file
 
-This is the original LSTM autoencoder pipeline.
+one timestamp column (default: timestamp)
 
-The model reconstructs past windows and uses reconstruction error as anomaly score.
+numerical sensor columns
 
-## Run a single detection experiment
+Known anomaly periods are defined in src/config.py.
+
+B) Arc pantograph dataset (arc_mm_braking_5)
+
+Expected input:
+
+the extracted archive root folder
+
+the repository will look explicitly for:
+
+MM_B_1
+
+MM_B_2
+
+MM_B_3
+
+MM_B_4
+
+MM_B_5
+
+For each event, the code expects the text files:
+
+_x.txt
+
+_Vp.txt
+
+_Vf.txt
+
+_Ip.txt
+
+_IR.txt
+
+The five events are concatenated internally.
+Windows are forced to stay inside each event.
+
+Single run — MetroPT3
 
 ```bash
 PYTHONPATH=. python scripts/run_single.py \
+  --dataset metropt3 \
   --data_dir ./data \
-  --out_dir ./outputs/single_run \
+  --out_dir ./outputs/single_run_metro \
   --resample 1T \
   --window 360 \
   --stride 20 \
@@ -88,44 +128,83 @@ PYTHONPATH=. python scripts/run_single.py \
   --latent 4
 ```
 
----
-
-## Run an AUC grid search (Detection)
+Grid search — MetroPT3
 
 ```bash
 PYTHONPATH=. python scripts/run_grid_auc.py \
+  --dataset metropt3 \
   --data_dir ./data \
-  --out_dir ./outputs/grid_auc \
+  --out_dir ./outputs/grid_auc_metro \
   --resample 1T
 ```
 
-Grid search exports:
+Outputs:
 
-- One figure per run (score timeline + AUC information)
-- A CSV (`grid_results_partial.csv`) appended after each run
-- To resume an interrupted grid, relaunch the script with `--run_dir <existing_run_folder>`
+one figure per run
 
----
+one CSV file: grid_results_partial.csv
 
-# Forecast-Based Anomaly Prediction
+Single run — Arc dataset
 
-This pipeline predicts future behavior instead of reconstructing the past.
+```bash
+PYTHONPATH=. python scripts/run_single.py \
+  --dataset arc_mm_braking_5 \
+  --data_dir ./data/Dataset_Arc_Events_v3_extracted \
+  --out_dir ./outputs/single_run_arc \
+  --resample raw \
+  --window 1024 \
+  --stride 64 \
+  --hidden 48 \
+  --latent 4
+```
 
-Instead of learning:
+Notes:
 
-> "What does normal look like?"
+raw keeps the native event sampling
 
-It learns:
+the evaluation is a proxy evaluation
 
-> "Given the past, what should the future look like?"
+the shaded green regions correspond to the known healthy prefixes
 
-Anomaly score = prediction error.
+Grid search — Arc dataset
 
-This enables early-warning analysis.
+```bash
+PYTHONPATH=. python scripts/run_grid_auc.py \
+  --dataset arc_mm_braking_5 \
+  --data_dir ./data/Dataset_Arc_Events_v3_extracted \
+  --out_dir ./outputs/grid_auc_arc \
+  --resample raw
+```
 
----
+Outputs:
 
-## Run a single forecasting experiment
+one figure per run
+
+one CSV file: grid_results_partial.csv
+
+proxy metrics:
+
+proxy_roc_auc
+
+proxy_pr_auc
+
+These are not true anomaly AUC metrics.
+They measure the separation between the known healthy prefix and the remaining unknown region.
+
+Analyze grid results
+MetroPT3 / standard detection
+python scripts/analyze_grid.py --results_csv ./outputs/grid_auc_metro/<RUN_FOLDER>/grid_results_partial.csv
+Arc dataset / weak-label proxy evaluation
+python scripts/analyze_grid.py --results_csv ./outputs/grid_auc_arc/<RUN_FOLDER>/grid_results_partial.csv
+Forecasting
+python scripts/analyze_grid.py --results_csv ./outputs/grid_forecast_auc/<RUN_FOLDER>/grid_results_partial.csv
+Forecast-Based Anomaly Prediction
+
+Forecasting scripts are kept in the repository and remain usable for the original MetroPT3 workflow.
+
+At this stage, the pantograph arc dataset is not integrated into the forecasting pipeline in this repository version.
+
+Single forecasting run
 
 ```bash
 PYTHONPATH=. python scripts/run_single_forecast.py \
@@ -140,17 +219,7 @@ PYTHONPATH=. python scripts/run_single_forecast.py \
   --auc_points 500
 ```
 
-Parameters:
-
-- `input_window` : size of past window (minutes if 1T)
-- `pred_horizon` : future horizon to predict
-- `stride` : window shift
-- `hidden` / `latent` : model capacity
-- `auc_points` : number of thresholds used for ROC approximation
-
----
-
-## Run a forecasting AUC grid search
+Forecasting grid
 
 ```bash
 PYTHONPATH=. python scripts/run_grid_forecast_auc.py \
@@ -158,43 +227,3 @@ PYTHONPATH=. python scripts/run_grid_forecast_auc.py \
   --out_dir ./outputs/grid_forecast_auc \
   --resample 1T
 ```
-
-Outputs:
-
-- One folder per run
-- A score plot per run
-- A `forecast_metrics.json` file
-- A `grid_results_partial.csv` file
-- To resume an interrupted forecasting grid, relaunch the script with `--run_dir <existing_run_folder>`
-
----
-
-## Analyze grid results
-
-Detection:
-
-```bash
-python scripts/analyze_grid.py --results_csv ./outputs/grid_auc/<RUN_FOLDER>/grid_results_partial.csv
-```
-
-Forecasting:
-
-```bash
-python scripts/analyze_grid.py --results_csv ./outputs/grid_forecast_auc/<RUN_FOLDER>/grid_results_partial.csv
-```
-
----
-
-## Notes
-
-For anomaly detection with extreme class imbalance:
-
-- PR-AUC is often more informative than ROC-AUC.
-- ROC-AUC is approximated using a limited number of thresholds for efficiency.
-- Threshold-free evaluation is preferred over fixed F1 selection.
-
-Reconstruction-based detection identifies abnormal segments.
-
-Forecast-based prediction evaluates whether future behavior is predictable from past dynamics.
-
-Both approaches can be compared under identical preprocessing conditions.

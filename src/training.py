@@ -5,14 +5,6 @@ from torch.utils.data import DataLoader
 
 
 def reconstruction_errors(model: torch.nn.Module, loader: DataLoader, device: str) -> np.ndarray:
-    """
-    Compute per-window reconstruction MSE.
-
-    Returns
-    -------
-    np.ndarray
-        Error per batch element (one scalar per window).
-    """
     model.eval()
     errs = []
     with torch.no_grad():
@@ -36,16 +28,6 @@ def train_with_early_stopping(
     min_delta: float,
     use_early_stopping: bool = True,
 ) -> dict:
-    """
-    Train a model with optional early stopping based on validation MSE.
-
-    Returns
-    -------
-    dict
-        Training summary:
-        - best_val_mse
-        - epochs_ran
-    """
     optim = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
 
@@ -64,7 +46,6 @@ def train_with_early_stopping(
             recon = model(batch)
             loss = loss_fn(recon, batch)
 
-            # If this happens, it's almost always data related (NaN/Inf).
             if torch.isnan(loss):
                 raise RuntimeError("Loss became NaN during training (check data preprocessing).")
 
@@ -76,7 +57,6 @@ def train_with_early_stopping(
         val_errs = reconstruction_errors(model, val_loader, device)
         val_mse = float(np.mean(val_errs)) if len(val_errs) else float("inf")
 
-        # Tiny "human" log: helps when scanning long runs
         train_loss = float(np.mean(losses)) if len(losses) else float("inf")
         print(f"Epoch {epoch:02d} | train_loss={train_loss:.6f} | val_mse={val_mse:.6f}")
 
